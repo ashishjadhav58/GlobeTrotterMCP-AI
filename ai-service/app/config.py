@@ -31,6 +31,12 @@ class Settings:
     llm_provider: str
     database_url: str | None
     node_backend_url: str
+    public_ai_base_url: str
+    frontend_base_url: str
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_pass: str
     port: int
     gemini_models: list[tuple[str, str]]
     max_replan_attempts: int
@@ -48,6 +54,15 @@ class Settings:
         self.database_url = os.getenv("DATABASE_URL", "").strip() or None
         self.node_backend_url = os.getenv("NODE_BACKEND_URL", "http://127.0.0.1:5000").rstrip("/")
         self.port = int(os.getenv("AI_SERVICE_PORT", "8000"))
+        self.public_ai_base_url = os.getenv(
+            "PUBLIC_AI_BASE_URL",
+            f"http://127.0.0.1:{self.port}",
+        ).rstrip("/")
+        self.frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+        self.smtp_host = os.getenv("SMTP_HOST", "").strip()
+        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        self.smtp_user = os.getenv("SMTP_USER", "").strip()
+        self.smtp_pass = os.getenv("SMTP_PASS", "").strip().strip('"')
         self.max_replan_attempts = int(os.getenv("MAX_REPLAN_ATTEMPTS", "3"))
         # Prefer flash first to reduce 429s on pro-preview quotas
         primary = os.getenv("GEMINI_MODEL_PRIMARY", "gemini-3.1-flash-lite")

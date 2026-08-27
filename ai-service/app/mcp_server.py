@@ -6,18 +6,21 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from app.services import actions as actions_service
 from app.services import activities as activities_service
 from app.services import alternatives as alternatives_service
+from app.services import analytics as analytics_service
 from app.services import budget as budget_service
 from app.services import cities as cities_service
 from app.services import gemini as gemini_service
+from app.services import planning as planning_service
 
 mcp = MCPServer(
     name="globetrotter-mcp",
     instructions=(
-        "GlobeTrotter travel planning tools. Typical flow: search_cities → "
-        "generate_itinerary → check_budget → if over budget, suggest_alternatives "
-        "then regenerate with constraints. search_activities helps find cheaper options."
+        "GlobeTrotter travel planning and admin analytics tools. "
+        "Planning: search_cities → generate_itinerary → check_budget → "
+        "suggest_alternatives. Admin: get_today_user_count, get_today_trip_count, …"
     ),
 )
 
@@ -124,3 +127,166 @@ async def suggest_alternatives(
         city=city,
         max_budget=max_budget,
     )
+
+
+@mcp.tool(
+    name="get_today_user_count",
+    description=(
+        "Admin analytics: count how many users signed up today (UTC calendar day). "
+        "No parameters. Returns count plus the UTC day window used."
+    ),
+)
+def get_today_user_count() -> dict[str, Any]:
+    """MCP tool: users created today (UTC)."""
+    return analytics_service.get_today_user_count()
+
+
+@mcp.tool(
+    name="get_today_trip_count",
+    description=(
+        "Admin analytics: count how many trips were created today (UTC calendar day). "
+        "No parameters. Returns count plus the UTC day window used."
+    ),
+)
+def get_today_trip_count() -> dict[str, Any]:
+    """MCP tool: trips created today (UTC)."""
+    return analytics_service.get_today_trip_count()
+
+
+@mcp.tool(
+    name="get_revenue_summary",
+    description=(
+        "Admin analytics: revenue summary for a period (day|week|month|year). "
+        "Returns MOCK revenue (no payment system yet) plus real trip_count in the window. "
+        "Flag is_mock=true always until billing exists."
+    ),
+)
+def get_revenue_summary(period: str = "month") -> dict[str, Any]:
+    """MCP tool: mock revenue summary for a period."""
+    return analytics_service.get_revenue_summary(period=period)
+
+
+@mcp.tool(
+    name="get_popular_destinations",
+    description=(
+        "Admin analytics: top destinations by trip-stop count (TripStop→City), "
+        "same idea as dashboard regional selections. Optional limit (default 5, max 50)."
+    ),
+)
+def get_popular_destinations(limit: int = 5) -> dict[str, Any]:
+    """MCP tool: top destinations by trip volume."""
+    return analytics_service.get_popular_destinations(limit=limit)
+
+
+@mcp.tool(
+    name="get_disabled_users",
+    description=(
+        "Admin analytics: list users with status=Disabled "
+        "(id, username, email, names, role, timestamps). No parameters."
+    ),
+)
+def get_disabled_users() -> dict[str, Any]:
+    """MCP tool: disabled user accounts."""
+    return analytics_service.get_disabled_users()
+
+
+@mcp.tool(
+    name="flag_suspicious_activity",
+    description=(
+        "Admin analytics: simple heuristic — flag users who created many trips "
+        "in a short window (default >=5 trips in 24h). NOT a real fraud model. "
+        "Optional window_hours and trip_threshold."
+    ),
+)
+def flag_suspicious_activity(window_hours: int = 24, trip_threshold: int = 5) -> dict[str, Any]:
+    """MCP tool: burst trip-creation heuristic."""
+    return analytics_service.flag_suspicious_activity(
+        window_hours=window_hours,
+        trip_threshold=trip_threshold,
+    )
+
+
+@mcp.tool(
+    name="get_community_engagement_stats",
+    description=(
+        "Admin analytics: community likes/comments totals plus today vs yesterday "
+        "post/comment trends (UTC). No parameters."
+    ),
+)
+def get_community_engagement_stats() -> dict[str, Any]:
+    """MCP tool: community engagement totals and trends."""
+    return analytics_service.get_community_engagement_stats()
+
+
+@mcp.tool(
+    name="check_weather_for_trip",
+    description=(
+        "User planning: forecast summary for a destination and date range via Open-Meteo "
+        "(no API key). Pass destination string and dates {start,end} or 'YYYY-MM-DD to YYYY-MM-DD'."
+    ),
+)
+async def check_weather_for_trip(destination: str, dates: dict[str, Any] | str) -> dict[str, Any]:
+    """MCP tool: Open-Meteo weather summary."""
+    return await planning_service.check_weather_for_trip(destination=destination, dates=dates)
+
+
+@mcp.tool(
+    name="compare_destinations",
+    description=(
+        "User planning: compare two cities for a budget — estimated cost, popular activities, "
+        "and near-term weather suitability. Useful for 'Paris or Rome?' questions."
+    ),
+)
+async def compare_destinations(city_a: str, city_b: str, budget: float) -> dict[str, Any]:
+    """MCP tool: structured destination comparison."""
+    return await planning_service.compare_destinations(
+        city_a=city_a, city_b=city_b, budget=budget
+    )
+
+
+@mcp.tool(
+    name="optimize_itinerary_order",
+    description=(
+        "User planning: reorder a day's activities by geographic nearest-neighbor, "
+        "or reorder day-section descriptions for arrival→activities→departure flow."
+    ),
+)
+def optimize_itinerary_order(itinerary: list[dict[str, Any]] | dict[str, Any]) -> dict[str, Any]:
+    """MCP tool: reorder itinerary for better flow."""
+    return planning_service.optimize_itinerary_order(itinerary=itinerary)
+
+
+@mcp.tool(
+    name="find_similar_trips",
+    description=(
+        "User planning: find other users' trips similar to this user's past destinations/"
+        "interests (token Jaccard; no vector DB). Requires user_id; optional limit."
+    ),
+)
+def find_similar_trips(user_id: str, limit: int = 5) -> dict[str, Any]:
+    """MCP tool: similar past trips for a user."""
+    return planning_service.find_similar_trips(user_id=user_id, limit=limit)
+
+
+@mcp.tool(
+    name="export_trip_pdf",
+    description=(
+        "Action: generate a PDF of a trip itinerary. Requires trip_id. "
+        "Returns local path and download_url under /exports/."
+    ),
+)
+def export_trip_pdf(trip_id: str) -> dict[str, Any]:
+    """MCP tool: export itinerary PDF."""
+    return actions_service.export_trip_pdf(trip_id=trip_id)
+
+
+@mcp.tool(
+    name="send_trip_reminder_email",
+    description=(
+        "Action: email the trip owner a reminder with itinerary link. Requires trip_id. "
+        "Uses SMTP_* env (same as Node). Pass dry_run=true to preview without sending."
+    ),
+)
+def send_trip_reminder_email(trip_id: str, dry_run: bool = False) -> dict[str, Any]:
+    """MCP tool: send trip reminder email."""
+    return actions_service.send_trip_reminder_email(trip_id=trip_id, dry_run=dry_run)

@@ -25,6 +25,7 @@ Thumbs.db
 **/*.py[cod]
 ai-service/.venv/
 ai-service/**/.venv/
+ai-service/exports/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/

@@ -10,5 +10,6 @@ router.get('/analytics', adminController.getAnalytics);
 router.get('/users', adminController.getUsers);
 router.patch('/users/:id/status', adminController.toggleUserStatus);
 router.delete('/users/:id', adminController.deleteUser);
+router.post('/chat', adminController.adminChat);
 
 module.exports = router;

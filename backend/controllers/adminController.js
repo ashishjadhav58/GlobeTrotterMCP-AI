@@ -259,3 +259,54 @@ exports.deleteUser = async (req, res) => {
     return res.status(500).json({ error: 'Failed to delete user.' });
   }
 };
+
+/**
+ * POST /api/admin/chat
+ * Proxy to Python AI service admin chat (Gemini function calling + MCP tools).
+ * Protected by adminAuth middleware.
+ */
+exports.adminChat = async (req, res) => {
+  try {
+    const { message, history, maxRounds } = req.body || {};
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'message is required.' });
+    }
+
+    const base = (process.env.AI_SERVICE_URL || 'http://127.0.0.1:8000').replace(/\/$/, '');
+    const authHeader = req.headers.authorization || '';
+
+    let response;
+    try {
+      response = await fetch(`${base}/admin/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: authHeader,
+        },
+        body: JSON.stringify({
+          message: message.trim(),
+          history: Array.isArray(history) ? history : [],
+          maxRounds: maxRounds || 6,
+        }),
+        signal: AbortSignal.timeout(Number(process.env.AI_SERVICE_TIMEOUT_MS || 180000)),
+      });
+    } catch (err) {
+      console.error('Admin chat AI service unreachable:', err.message);
+      return res.status(502).json({
+        error: `AI service unreachable at ${base}/admin/chat. Is ai-service running?`,
+      });
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: data.detail || data.error || 'Admin chat failed',
+      });
+    }
+
+    return res.json(data);
+  } catch (error) {
+    console.error('Admin chat Error:', error);
+    return res.status(500).json({ error: 'Failed to run admin chat.' });
+  }
+};
