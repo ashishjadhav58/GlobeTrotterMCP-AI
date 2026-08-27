@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { clearAuth, getUser, authApi, dashboardApi, User, TripData } from "@/lib/api";
-import { Calendar, MessageSquare, IndianRupee, Plane, Landmark, Map, Share2 } from "lucide-react";
+import { Bot, Calendar, MessageSquare, IndianRupee, Plane, Landmark, Map, Share2 } from "lucide-react";
 
 interface Trip {
   id: string;
@@ -178,7 +178,10 @@ export default function LandingPage() {
           <Link href="/calendar" style={{ textDecoration: "none", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "6px 12px", color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
             <Calendar size={14} strokeWidth={2} /> Calendar View
           </Link>
-          <Link href="/community" style={{ textDecoration: "none", background: "rgba(45,212,191,0.1)", border: "1px solid rgba(45,212,191,0.3)", borderRadius: 8, padding: "6px 12px", color: "#2dd4bf", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+          <Link href="/ai-chat" style={{ textDecoration: "none", background: "rgba(45,212,191,0.1)", border: "1px solid rgba(45,212,191,0.3)", borderRadius: 8, padding: "6px 12px", color: "#2dd4bf", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Bot size={14} strokeWidth={2} /> AI Chat
+          </Link>
+          <Link href="/community" style={{ textDecoration: "none", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "6px 12px", color: "rgba(255,255,255,0.8)", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
             <MessageSquare size={14} strokeWidth={2} /> Community Tab
           </Link>
           <Link href="/profile" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}>
@@ -404,7 +407,17 @@ export default function LandingPage() {
       </main>
 
       {/* ── FAB ── */}
-      <div style={{ position: "fixed", bottom: 28, right: 28, zIndex: 50 }}>
+      <div style={{ position: "fixed", bottom: 28, right: 28, zIndex: 50, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+        <button
+          type="button"
+          onClick={() => router.push("/ai-chat")}
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 18px", background: "rgba(13,16,20,0.95)", border: "1px solid rgba(45,212,191,0.45)", borderRadius: 999, color: "#2dd4bf", fontSize: 13, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", boxShadow: "0 6px 24px rgba(0,0,0,0.35)", transition: "all 0.2s" }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
+        >
+          <Bot size={16} strokeWidth={2} />
+          AI Chat
+        </button>
         <button onClick={() => router.push("/plan-trip")}
           style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 22px", background: "linear-gradient(135deg,#14b8a6 0%,#0d9488 100%)", border: "none", borderRadius: 999, color: "#fff", fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", boxShadow: "0 6px 28px rgba(20,184,166,0.4)", transition: "all 0.2s" }}
           onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 36px rgba(20,184,166,0.6)"; e.currentTarget.style.transform = "translateY(-2px)"; }}

@@ -54,7 +54,7 @@ def normalize_itinerary(
 
         normalized.append(
             {
-                "id": section.get("id") or f"sec-{index + 1}",
+                "id": f"sec-{index + 1}",
                 "title": str(section.get("title") or f"Day {index + 1}"),
                 "description": str(
                     section.get("description") or section.get("details") or ""

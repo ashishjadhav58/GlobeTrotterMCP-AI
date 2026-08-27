@@ -14,7 +14,11 @@ from app.services import budget as budget_service
 from app.services import cities as cities_service
 from app.services import gemini as gemini_service
 from app.services import planning as planning_service
-from app.services.trip_persist import persist_planned_trip
+from app.services.trip_persist import (
+    delete_user_trip,
+    persist_planned_trip,
+    update_planned_trip,
+)
 
 mcp = MCPServer(
     name="globetrotter-mcp",
@@ -311,6 +315,7 @@ def persist_planned_trip_tool(
     name: str = "",
     description: str = "",
     expenses: list[dict[str, Any]] | None = None,
+    cover_image: str = "",
 ) -> dict[str, Any]:
     """MCP tool: persist planned trip to Postgres."""
     return persist_planned_trip(
@@ -323,4 +328,51 @@ def persist_planned_trip_tool(
         description=description,
         itinerary=itinerary,
         expenses=expenses,
+        cover_image=cover_image,
     )
+
+
+@mcp.tool(
+    name="update_planned_trip",
+    description=(
+        "Update an existing trip owned by the user (itinerary, budget, dates, description, cover image). "
+        "Requires trip_id and user_id."
+    ),
+)
+def update_planned_trip_tool(
+    user_id: str,
+    trip_id: str,
+    destination: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    max_budget: float = 0,
+    itinerary: list[dict[str, Any]] | None = None,
+    name: str = "",
+    description: str = "",
+    expenses: list[dict[str, Any]] | None = None,
+    cover_image: str = "",
+) -> dict[str, Any]:
+    return update_planned_trip(
+        user_id=user_id,
+        trip_id=trip_id,
+        destination=destination,
+        start_date=start_date,
+        end_date=end_date,
+        max_budget=max_budget,
+        name=name,
+        description=description,
+        itinerary=itinerary,
+        expenses=expenses,
+        cover_image=cover_image or None,
+    )
+
+
+@mcp.tool(
+    name="delete_user_trip",
+    description=(
+        "Delete a trip owned by the authenticated user. Requires trip_id and user_id. "
+        "Only call when the user clearly asks to delete/remove a trip."
+    ),
+)
+def delete_user_trip_tool(user_id: str, trip_id: str) -> dict[str, Any]:
+    return delete_user_trip(user_id=user_id, trip_id=trip_id)

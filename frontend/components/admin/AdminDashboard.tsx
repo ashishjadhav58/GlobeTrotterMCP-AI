@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   BarChart3,
+  Bot,
   Globe2,
   PieChart,
   Search,
@@ -137,6 +138,26 @@ export default function AdminDashboard() {
         {/* left space — GlobeTrotter is rendered by root layout */}
         <div style={{ width: 140 }} />
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button
+            type="button"
+            onClick={() => router.push("/admin/chat")}
+            style={{
+              background: "rgba(239,68,68,0.12)",
+              border: "1px solid rgba(239,68,68,0.4)",
+              borderRadius: 8,
+              padding: "6px 12px",
+              color: "#f87171",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Bot size={14} strokeWidth={2} /> Admin AI Chat
+          </button>
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
             Admin: <strong style={{ color: "#fff" }}>{currentUser?.firstName ?? "System"}</strong>
           </span>

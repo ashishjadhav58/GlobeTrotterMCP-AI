@@ -642,6 +642,59 @@ export interface AdminAnalyticsData {
   regionDistribution: Array<{ region: string; percentage: number; color: string }>;
 }
 
+export interface PlanChatResponse {
+  session_id: string;
+  answer: string;
+  itinerary_link?: string | null;
+  tool_call_trace?: ToolCallTraceStep[];
+  tools_available?: string[];
+  rounds_used?: number;
+  awaiting_confirm?: boolean;
+  last_trip_id?: string | null;
+  cover_image_url?: string | null;
+}
+
+export interface ChatSessionSummary {
+  id: string;
+  title: string;
+  message_count: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const chatApi = {
+  planTrip: (payload: {
+    message: string;
+    sessionId?: string | null;
+    maxRounds?: number;
+    coverImageUrl?: string | null;
+  }) =>
+    apiFetch<PlanChatResponse>("/api/chat/plan-trip", {
+      method: "POST",
+      body: JSON.stringify({
+        message: payload.message,
+        sessionId: payload.sessionId || null,
+        maxRounds: payload.maxRounds || 8,
+        coverImageUrl: payload.coverImageUrl || null,
+      }),
+    }),
+
+  listSessions: () => apiFetch<{ sessions: ChatSessionSummary[] }>("/api/chat/sessions"),
+
+  getSession: (sessionId: string) =>
+    apiFetch<{
+      session_id: string;
+      messages: Array<{ role: string; content: string }>;
+      agent_state?: Record<string, unknown>;
+    }>(`/api/chat/sessions/${encodeURIComponent(sessionId)}`),
+
+  deleteSession: (sessionId: string) =>
+    apiFetch<{ deleted: boolean; session_id: string }>(
+      `/api/chat/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" }
+    ),
+};
+
 export const adminApi = {
   getAnalytics: () =>
     apiFetch<{ analytics: AdminAnalyticsData }>("/api/admin/analytics"),
@@ -668,6 +721,25 @@ export const adminApi = {
   deleteUser: (id: string) =>
     apiFetch<{ message: string }>(`/api/admin/users/${id}`, {
       method: "DELETE",
+    }),
+
+  chat: (payload: {
+    message: string;
+    history?: Array<{ role: string; content: string }>;
+    maxRounds?: number;
+  }) =>
+    apiFetch<{
+      answer: string;
+      tool_call_trace?: ToolCallTraceStep[];
+      tools_available?: string[];
+      rounds_used?: number;
+    }>("/api/admin/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        message: payload.message,
+        history: payload.history || [],
+        maxRounds: payload.maxRounds || 6,
+      }),
     }),
 };
 

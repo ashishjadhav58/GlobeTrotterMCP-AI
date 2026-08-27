@@ -23,6 +23,7 @@ from app.agent.replan import plan_trip
 from app.agent.user_chat import run_user_plan_chat
 from app.auth import require_admin, require_user
 from app.mcp_server import mcp
+from app.services import sessions as session_store
 from pathlib import Path
 
 # Build the Streamable HTTP ASGI app (MCP endpoint path="/" under the /mcp mount).
@@ -78,6 +79,7 @@ class UserPlanChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     sessionId: str | None = None
     maxRounds: int | None = Field(default=8, ge=1, le=12)
+    coverImageUrl: str | None = None
 
 
 @app.get("/health")
@@ -163,6 +165,54 @@ async def admin_chat_endpoint(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/chat/sessions")
+async def list_chat_sessions(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    try:
+        identity = require_user(authorization)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    sessions = session_store.list_sessions(identity["userId"])
+    return {"sessions": sessions}
+
+
+@app.get("/chat/sessions/{session_id}")
+async def get_chat_session(
+    session_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    try:
+        identity = require_user(authorization)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    session = session_store.get_session(session_id, identity["userId"])
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {
+        "session_id": session["id"],
+        "messages": session.get("messages") or [],
+        "agent_state": session.get("agent_state") or {},
+        "createdAt": session.get("createdAt"),
+        "updatedAt": session.get("updatedAt"),
+    }
+
+
+@app.delete("/chat/sessions/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    try:
+        identity = require_user(authorization)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    ok = session_store.delete_session(session_id, identity["userId"])
+    if not ok:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"deleted": True, "session_id": session_id}
+
+
 @app.post("/chat/plan-trip")
 async def user_plan_chat_endpoint(
     body: UserPlanChatRequest,
@@ -183,6 +233,7 @@ async def user_plan_chat_endpoint(
             user_id=identity["userId"],
             session_id=body.sessionId,
             max_rounds=body.maxRounds or 8,
+            cover_image_url=body.coverImageUrl,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

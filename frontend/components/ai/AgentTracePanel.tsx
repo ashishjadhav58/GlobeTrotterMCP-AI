@@ -22,6 +22,20 @@ const TOOL_LABELS: Record<string, string> = {
   check_budget: "Check budget",
   suggest_alternatives: "Suggest cheaper swaps",
   generate_expenses: "Generate expenses",
+  compare_destinations: "Compare destinations",
+  check_weather_for_trip: "Check weather",
+  optimize_itinerary_order: "Optimize order",
+  find_similar_trips: "Find similar trips",
+  persist_planned_trip: "Save trip",
+  update_planned_trip: "Update trip",
+  delete_user_trip: "Delete trip",
+  get_today_user_count: "Users today",
+  get_today_trip_count: "Trips today",
+  get_revenue_summary: "Revenue summary",
+  get_popular_destinations: "Popular destinations",
+  get_disabled_users: "Disabled users",
+  flag_suspicious_activity: "Flag suspicious",
+  get_community_engagement_stats: "Community stats",
 };
 
 function summarizeOutput(tool: string, output: unknown): string {

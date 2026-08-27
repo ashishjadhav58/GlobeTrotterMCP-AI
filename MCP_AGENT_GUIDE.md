@@ -417,7 +417,9 @@ User (same `session_id`): “should I go to Paris or Rome for 5 days under ₹40
 (`compare_destinations` itself calls Open-Meteo weather for both cities.)  
 Answer converts ₹→USD, notes both ~over budget, recommends adjusting duration/budget or a tighter Rome plan.
 
-**Later turns (intended):** fill exact dates → `generate_itinerary` → `check_budget` / `suggest_alternatives` → `persist_planned_trip` → answer includes `itinerary_link`.
+**Later turns (intended):** fill exact dates → `generate_itinerary` → chat **summary** → user says yes → `persist_planned_trip` → answer includes `itinerary_link`.
+
+**Confirm-before-create:** Initial “create itinerary for …” does **not** save. Code blocks `persist_planned_trip` until `awaiting_confirm` (after a draft generate) and a clear yes/create confirmation. Missing dates → tool returns `missing_dates` so the model must ask.
 
 **Code locations**
 

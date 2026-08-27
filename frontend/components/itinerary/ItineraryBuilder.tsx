@@ -16,6 +16,35 @@ interface ItinerarySection {
   budget: string;
 }
 
+/** Ensure every section has a unique React key (AI itineraries often omit / duplicate id). */
+function normalizeSections(raw: unknown): ItinerarySection[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  return raw.map((item, index) => {
+    const sec = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    let id = String(sec.id ?? "").trim();
+    if (!id || seen.has(id)) {
+      id = `sec-${index + 1}-${Date.now().toString(36)}`;
+    }
+    seen.add(id);
+    const budgetVal = sec.budget ?? sec.dailyBudget ?? "";
+    let description = String(sec.description || sec.details || "");
+    const acts = sec.activities;
+    if (!description && Array.isArray(acts)) {
+      description = acts.map(String).join(" ");
+    }
+    const dayNum = typeof sec.day === "number" ? sec.day : index + 1;
+    return {
+      id,
+      title: String(sec.title || `Day ${dayNum}`),
+      description,
+      startDate: String(sec.startDate || sec.date || ""),
+      endDate: String(sec.endDate || sec.startDate || sec.date || ""),
+      budget: typeof budgetVal === "number" ? `₹${budgetVal}` : String(budgetVal || "₹0"),
+    };
+  });
+}
+
 export default function ItineraryBuilder() {
   const router = useRouter();
   const params = useParams();
@@ -59,7 +88,7 @@ export default function ItineraryBuilder() {
         setTrip(res.trip);
         if (res.trip.itinerary) {
           try {
-            setSections(JSON.parse(res.trip.itinerary));
+            setSections(normalizeSections(JSON.parse(res.trip.itinerary)));
           } catch (e) {
             console.error("Failed to parse itinerary:", e);
           }
@@ -130,7 +159,7 @@ export default function ItineraryBuilder() {
       const res = await tripApi.regenerateItinerary(tripId);
       if (res.trip.itinerary) {
         try {
-          const newSections = JSON.parse(res.trip.itinerary);
+          const newSections = normalizeSections(JSON.parse(res.trip.itinerary));
           setSections(newSections);
           saveItineraryToDB(newSections);
         } catch (e) {
@@ -265,8 +294,8 @@ export default function ItineraryBuilder() {
 
         {/* Itinerary Sections List */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          {sections.map((sec) => (
-            <div key={sec.id} style={{ ...cardStyle, position: "relative" }}>
+          {sections.map((sec, index) => (
+            <div key={sec.id || `section-${index}`} style={{ ...cardStyle, position: "relative" }}>
               {/* Section Header */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <h2 style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>{sec.title}</h2>
