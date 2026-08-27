@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, IndianRupee, Plus, Search, Sparkles, Wand2, Share2 } from "lucide-react";
 import { tripApi, TripData, getUser, User, isAuthenticated, publicTripApi } from "@/lib/api";
+import AgentTracePanel from "@/components/ai/AgentTracePanel";
+import { loadAgentTrace, parseAgentTraceField, saveAgentTrace, type StoredAgentTrace } from "@/lib/agentTrace";
 
 interface ItinerarySection {
   id: string;
@@ -34,6 +36,7 @@ export default function ItineraryBuilder() {
   const [newBudget, setNewBudget] = useState("");
 
   const [user, setUser] = useState<User | null>(null);
+  const [agentTrace, setAgentTrace] = useState<StoredAgentTrace | null>(null);
 
   const saveItineraryToDB = async (updatedSections: ItinerarySection[]) => {
     try {
@@ -60,6 +63,13 @@ export default function ItineraryBuilder() {
           } catch (e) {
             console.error("Failed to parse itinerary:", e);
           }
+        }
+        const fromDb = parseAgentTraceField(res.trip.agentTrace);
+        const fromSession = loadAgentTrace(tripId);
+        const resolved = fromDb || fromSession;
+        if (resolved) {
+          setAgentTrace(resolved);
+          saveAgentTrace(tripId, resolved);
         }
         setLoading(false);
       })
@@ -128,6 +138,16 @@ export default function ItineraryBuilder() {
           setError("Failed to parse the regenerated itinerary.");
         }
       }
+      if (res.toolCallTrace?.length) {
+        const stored = {
+          toolCallTrace: res.toolCallTrace,
+          agentMeta: res.agentMeta,
+          savedAt: new Date().toISOString(),
+        };
+        setAgentTrace(stored);
+        saveAgentTrace(tripId, stored);
+      }
+      if (res.trip) setTrip(res.trip);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to regenerate itinerary.");
     } finally {
@@ -237,6 +257,11 @@ export default function ItineraryBuilder() {
             )}
           </div>
         </div>
+
+        <AgentTracePanel
+          trace={agentTrace}
+          title="MCP agent tool-call trace"
+        />
 
         {/* Itinerary Sections List */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>

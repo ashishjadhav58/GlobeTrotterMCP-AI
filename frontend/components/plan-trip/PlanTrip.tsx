@@ -131,6 +131,12 @@ export default function PlanTrip() {
         maxBudget: maxBudget ? parseFloat(maxBudget) : undefined,
       });
 
+      const { saveAgentTrace } = await import("@/lib/agentTrace");
+      saveAgentTrace(res.trip.id, {
+        toolCallTrace: res.toolCallTrace,
+        agentMeta: res.agentMeta,
+      });
+
       // Move directly to Itinerary Builder (Screen 5)
       router.push(`/itinerary/${res.trip.id}`);
     } catch (err: unknown) {

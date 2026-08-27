@@ -73,11 +73,22 @@ DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
 # JWT Auth Secret
 JWT_SECRET="your_super_secret_jwt_key"
 
-# Gemini AI API Key
+# Gemini AI API Key (used by ai-service; Node no longer calls Gemini directly)
 GEMINI_API_KEY="your_google_gemini_api_key"
+
+# Python MCP AI service
+AI_SERVICE_URL="http://127.0.0.1:8000"
 
 # Server Port
 PORT=5001
+```
+
+#### AI service (`ai-service/.env` or reuse `backend/.env`)
+```env
+GEMINI_API_KEY="your_google_gemini_api_key"
+DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
+AI_SERVICE_PORT=8000
+MAX_REPLAN_ATTEMPTS=3
 ```
 
 #### Frontend (`frontend/.env.local`)
@@ -99,14 +110,25 @@ node seedCommunity.js
 
 ### 4. Run the Application
 
-Start both the frontend and backend servers.
+Start the AI service, backend, and frontend.
+
+**Run AI service (MCP + `/plan-trip`):**
+```bash
+cd ai-service
+python -m venv .venv
+# Windows: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+set PYTHONPATH=.
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+*(See `RAG_MCP_GUIDE.md` for tool smoke tests.)*
 
 **Run Backend (API):**
 ```bash
 cd backend
 node server.js
 ```
-*(The backend runs on `http://localhost:5001`)*
+*(The backend runs on `http://localhost:5001` and calls the AI service for itineraries.)*
 
 **Run Frontend (UI):**
 ```bash
@@ -121,8 +143,12 @@ npm run dev
 
 ```
 GlobeTrotter/
+├── ai-service/           # Python FastAPI + MCP tools + re-plan agent
+│   ├── app/              # MCP server, agent loop, Gemini helpers
+│   └── scripts/          # Tool / re-plan smoke tests
 ├── backend/
-│   ├── controllers/      # API logic (auth, trips, activities, admin, AI)
+│   ├── controllers/      # API logic (auth, trips, activities, admin)
+│   ├── services/         # aiService.js → Python /plan-trip
 │   ├── middleware/       # JWT auth & Admin route guards
 │   ├── routes/           # Express endpoint definitions
 │   ├── utils/            # Prisma client instance

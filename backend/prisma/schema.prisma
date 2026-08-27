@@ -61,12 +61,11 @@ model Trip {
   endDate        DateTime
   coverImage     String?
   maxBudget      Float          @default(2000.0)
-  itinerary      Json?
-  expenses       Json?
-  tripStops      TripStop[]
-  tripActivities TripActivity[]
   itinerary      String?
   expenses       String?
+  agentTrace     String?
+  tripStops      TripStop[]
+  tripActivities TripActivity[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 

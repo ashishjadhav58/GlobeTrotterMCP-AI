@@ -19,3 +19,12 @@ npm-debug.log*
 yarn-debug.log*
 .DS_Store
 Thumbs.db
+
+# Python AI service
+**/__pycache__/
+**/*.py[cod]
+ai-service/.venv/
+ai-service/**/.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/

@@ -1,229 +1,10 @@
 const prisma = require('../utils/prisma');
-
-const GEMINI_ENDPOINTS = [
-  { version: 'v1beta', model: 'gemini-3.1-pro-preview' },
-  { version: 'v1beta', model: 'gemini-3.1-flash-lite' },
-];
-
-function formatIsoDate(value) {
-  const date = value instanceof Date ? value : new Date(value);
-  if (isNaN(date.getTime())) return String(value || '');
-  return date.toISOString().slice(0, 10);
-}
-
-function inclusiveTripDays(startDate, endDate) {
-  const start = new Date(startDate);
-  const end = new Date(endDate);
-  start.setHours(0, 0, 0, 0);
-  end.setHours(0, 0, 0, 0);
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) return 1;
-  return Math.max(1, Math.round((end - start) / 86400000) + 1);
-}
-
-function extractJsonArray(text) {
-  if (!text || typeof text !== 'string') {
-    throw new Error('Empty Gemini response');
-  }
-
-  let cleaned = text.trim();
-  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-
-  const firstBracket = cleaned.search(/[\[{]/);
-  const lastBracket = Math.max(cleaned.lastIndexOf(']'), cleaned.lastIndexOf('}'));
-  if (firstBracket !== -1 && lastBracket > firstBracket) {
-    cleaned = cleaned.slice(firstBracket, lastBracket + 1);
-  }
-
-  const parsed = JSON.parse(cleaned);
-  if (Array.isArray(parsed)) return parsed;
-  if (Array.isArray(parsed.itinerary)) return parsed.itinerary;
-  if (Array.isArray(parsed.sections)) return parsed.sections;
-  if (Array.isArray(parsed.expenses)) return parsed.expenses;
-  if (Array.isArray(parsed.items)) return parsed.items;
-  if (Array.isArray(parsed.days)) return parsed.days;
-  throw new Error('Gemini response was not a JSON array');
-}
-
-async function callGeminiJson(prompt) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured on the server.');
-  }
-
-  let lastError = 'Gemini request failed';
-
-  for (const { version, model } of GEMINI_ENDPOINTS) {
-    try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/${version}/models/${model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: 'application/json',
-            },
-          }),
-        }
-      );
-
-      const json = await response.json();
-      if (!response.ok || json.error) {
-        lastError = json.error?.message || `Gemini HTTP ${response.status}`;
-        console.error(`Gemini ${version}/${model} failed:`, lastError);
-        continue;
-      }
-
-      const parts = json.candidates?.[0]?.content?.parts;
-      const text = Array.isArray(parts)
-        ? parts.map((part) => part.text || '').join('\n')
-        : '';
-
-      if (!text.trim()) {
-        lastError = 'Gemini returned an empty itinerary';
-        continue;
-      }
-
-      return extractJsonArray(text);
-    } catch (err) {
-      lastError = err.message || String(err);
-      console.error(`Gemini ${version}/${model} parse error:`, lastError);
-    }
-  }
-
-  throw new Error(lastError);
-}
-
-function normalizeItinerary(sections, startDate, dayCount, maxBudget) {
-  const start = new Date(startDate);
-  const perDay = dayCount > 0 ? Math.round((Number(maxBudget) || 0) / dayCount) : 0;
-
-  return sections.slice(0, dayCount).map((section, index) => {
-    const dayDate = new Date(start);
-    dayDate.setDate(start.getDate() + index);
-    const iso = formatIsoDate(dayDate);
-    const budgetValue = section.budget ?? section.dailyBudget ?? perDay;
-    const budget =
-      typeof budgetValue === 'number'
-        ? `$${budgetValue}`
-        : String(budgetValue || `$${perDay}`);
-
-    return {
-      id: section.id || `sec-${index + 1}`,
-      title: String(section.title || `Day ${index + 1}`),
-      description: String(section.description || section.details || ''),
-      startDate: String(section.startDate || section.date || iso),
-      endDate: String(section.endDate || section.startDate || section.date || iso),
-      budget,
-    };
-  });
-}
-
-function normalizeExpenses(items, dayCount) {
-  const allowed = new Set(['Transport', 'Stay', 'Activities', 'Meals']);
-  return items.map((item, index) => {
-    const category = allowed.has(item.category) ? item.category : 'Activities';
-    const day = Number(item.day) || ((index % dayCount) + 1);
-    return {
-      id: String(item.id || `e${index + 1}`),
-      day: Math.min(Math.max(day, 1), dayCount),
-      activityTitle: String(item.activityTitle || item.title || item.name || 'Activity'),
-      category,
-      cost: Number(item.cost) || 0,
-    };
-  });
-}
-
-async function generateGeminiItinerary(name, location, startDate, endDate, description, maxBudget) {
-  const dayCount = inclusiveTripDays(startDate, endDate);
-  const start = formatIsoDate(startDate);
-  const end = formatIsoDate(endDate);
-
-  const prompt = `You are a professional travel planner. Create a REAL, destination-specific daily itinerary.
-
-Trip name: ${name}
-Destination(s): ${location}
-Dates: ${start} to ${end} (exactly ${dayCount} day(s), inclusive)
-Traveler notes: ${description || 'None'}
-Total trip budget: $${maxBudget} USD
-
-Hard rules:
-- Plan ONLY for "${location}". Do not invent a different city or country.
-- Do not use placeholder, generic, or example destinations (no fake "Global" sightseeing).
-- Every activity, hotel, restaurant, transit option, and landmark must be a real named place that exists in that destination.
-- Create exactly ${dayCount} objects, one for each calendar day from ${start} through ${end}.
-- Daily section budgets must be realistic for that day's activities and MUST sum to approximately $${maxBudget} (do not exceed it).
-- Scale lodging, food, and attractions to this budget (budget vs mid-range vs premium).
-- Vary each day. Cover arrival/departure logistics on first and last days.
-
-Return a JSON array only. Each object must have:
-- title (string, e.g. "Day 1: Neighborhood and landmark names")
-- description (string, detailed paragraph with specific place names, meals, and transport)
-- startDate (YYYY-MM-DD for that day)
-- endDate (YYYY-MM-DD for that day, same as startDate)
-- budget (string like "$180")`;
-
-  const sections = await callGeminiJson(prompt);
-  const normalized = normalizeItinerary(sections, startDate, dayCount, maxBudget);
-  if (!normalized.length) {
-    throw new Error('Gemini returned no itinerary days');
-  }
-  return JSON.stringify(normalized);
-}
-
-async function generateGeminiExpenses(name, location, startDate, endDate, description, maxBudget) {
-  const dayCount = inclusiveTripDays(startDate, endDate);
-  const start = formatIsoDate(startDate);
-  const end = formatIsoDate(endDate);
-
-  const prompt = `You are a travel budget analyst. Create a REAL itemized expense list for this trip.
-
-Trip name: ${name}
-Destination(s): ${location}
-Dates: ${start} to ${end} (exactly ${dayCount} day(s))
-Traveler notes: ${description || 'None'}
-Total trip budget: $${maxBudget} USD
-
-Hard rules:
-- Expenses must match "${location}" only. Use real local hotels, transit, restaurants, and attractions by name.
-- No generic placeholders and no unrelated cities.
-- Cover every day from 1 to ${dayCount}.
-- Each day should typically include Stay, Transport, Meals, and Activities when realistic.
-- All costs are USD numbers. The SUM of every cost must be <= $${maxBudget} and close to that total.
-- Scale prices to the given budget and local cost of living.
-
-Return a JSON array only. Each object must have:
-- id (string, e.g. "e1")
-- day (number from 1 to ${dayCount})
-- activityTitle (string with a specific real venue or service name)
-- category (exactly one of: "Transport", "Stay", "Activities", "Meals")
-- cost (number)`;
-
-  const items = await callGeminiJson(prompt);
-  const normalized = normalizeExpenses(items, dayCount);
-  if (!normalized.length) {
-    throw new Error('Gemini returned no expenses');
-  }
-  return JSON.stringify(normalized);
-}
-
-function tripLocationFromStops(trip, fallbackLocation) {
-  const names = (trip.tripStops || [])
-    .map((stop) => {
-      const city = stop.city;
-      if (!city) return null;
-      return city.country ? `${city.name}, ${city.country}` : city.name;
-    })
-    .filter(Boolean);
-  if (names.length) return [...new Set(names)].join(' → ');
-  return fallbackLocation || '';
-}
-
+const aiService = require('../services/aiService');
 
 /**
  * POST /api/trips
- * Create a new trip for authenticated user
+ * Create a new trip for authenticated user.
+ * Itinerary/expenses come from the Python MCP AI service (POST /plan-trip).
  */
 exports.createTrip = async (req, res) => {
   try {
@@ -303,44 +84,61 @@ exports.createTrip = async (req, res) => {
 
     let itinerary;
     let expenses;
+    let toolCallTrace = [];
+    let agentMeta = null;
+    let agentTrace = null;
     try {
-      itinerary = await generateGeminiItinerary(
-        name.trim(),
-        resolvedLocation,
+      const planned = await aiService.planTrip({
+        name: name.trim(),
+        destination: resolvedLocation,
         startDate,
         endDate,
-        description,
-        parsedBudget
-      );
-      expenses = await generateGeminiExpenses(
-        name.trim(),
-        resolvedLocation,
-        startDate,
-        endDate,
-        description,
-        parsedBudget
-      );
+        maxBudget: parsedBudget,
+        description: description || '',
+        interests: description || '',
+        includeExpenses: true,
+      });
+      itinerary = planned.itinerary;
+      expenses = planned.expenses;
+      toolCallTrace = planned.toolCallTrace;
+      agentMeta = {
+        budgetPassed: planned.budgetPassed,
+        budgetCheck: planned.budgetCheck,
+        attemptsUsed: planned.attemptsUsed,
+      };
+      agentTrace = JSON.stringify({
+        toolCallTrace,
+        agentMeta,
+        savedAt: new Date().toISOString(),
+      });
     } catch (e) {
-      console.error("Gemini generation failed:", e);
+      console.error('AI service trip planning failed:', e);
       return res.status(500).json({
         error: e.message || 'Failed to generate itinerary with AI. Please try again.',
       });
     }
 
-    // Create trip in database
-    const trip = await prisma.trip.create({
-      data: {
-        userId,
-        name: name.trim(),
-        description: description ? description.trim() : null,
-        startDate: start,
-        endDate: end,
-        coverImage: resolvedCoverImage,
-        itinerary,
-        expenses,
-        maxBudget: parsedBudget,
-      },
-    });
+    // Create trip in database (agentTrace optional until `prisma db push` adds the column)
+    const tripData = {
+      userId,
+      name: name.trim(),
+      description: description ? description.trim() : null,
+      startDate: start,
+      endDate: end,
+      coverImage: resolvedCoverImage,
+      itinerary,
+      expenses,
+      maxBudget: parsedBudget,
+    };
+    let trip;
+    try {
+      trip = await prisma.trip.create({
+        data: { ...tripData, agentTrace },
+      });
+    } catch (persistErr) {
+      console.warn('Saving agentTrace failed; creating trip without it:', persistErr.message);
+      trip = await prisma.trip.create({ data: tripData });
+    }
 
     // If cityId or location text provided, add initial trip stop
     if (cityId) {
@@ -375,6 +173,8 @@ exports.createTrip = async (req, res) => {
     return res.status(201).json({
       message: 'Trip created successfully',
       trip,
+      toolCallTrace,
+      agentMeta,
     });
   } catch (error) {
     console.error('Error creating trip:', error);
@@ -653,7 +453,7 @@ exports.deleteTripStop = async (req, res) => {
 
 /**
  * POST /api/trips/:id/regenerate-itinerary
- * Regenerate trip itinerary using Gemini AI
+ * Regenerate trip itinerary via the Python MCP AI service
  */
 exports.regenerateItinerary = async (req, res) => {
   try {
@@ -675,29 +475,64 @@ exports.regenerateItinerary = async (req, res) => {
       return res.status(404).json({ error: 'Trip not found or unauthorized.' });
     }
 
-    const primaryLocation = trip.tripStops?.[0]?.city?.name || 'Global';
+    const stopCity = trip.tripStops?.[0]?.city;
+    const primaryLocation = stopCity
+      ? `${stopCity.name}${stopCity.country ? `, ${stopCity.country}` : ''}`
+      : 'Global';
 
-    // Generate custom itinerary using Gemini AI
     let itinerary = null;
+    let toolCallTrace = [];
+    let agentMeta = null;
+    let agentTrace = null;
     try {
-      itinerary = await generateGeminiItinerary(trip.name, primaryLocation, trip.startDate, trip.endDate, trip.description);
+      const planned = await aiService.planTrip({
+        name: trip.name,
+        destination: primaryLocation,
+        startDate: trip.startDate,
+        endDate: trip.endDate,
+        maxBudget: trip.maxBudget || 2000,
+        description: trip.description || '',
+        interests: trip.description || '',
+        includeExpenses: false,
+      });
+      itinerary = planned.itinerary;
+      toolCallTrace = planned.toolCallTrace;
+      agentMeta = {
+        budgetPassed: planned.budgetPassed,
+        budgetCheck: planned.budgetCheck,
+        attemptsUsed: planned.attemptsUsed,
+      };
+      agentTrace = JSON.stringify({
+        toolCallTrace,
+        agentMeta,
+        savedAt: new Date().toISOString(),
+      });
     } catch (e) {
-      console.error("Gemini regeneration failed:", e);
+      console.error('AI service regeneration failed:', e);
+      return res.status(500).json({
+        error: e.message || 'Failed to generate itinerary with AI. Please try again.',
+      });
     }
 
-    if (!itinerary) {
-      return res.status(500).json({ error: 'Failed to generate itinerary with AI. Please try again.' });
+    let updated;
+    try {
+      updated = await prisma.trip.update({
+        where: { id },
+        data: { itinerary, agentTrace },
+      });
+    } catch (persistErr) {
+      console.warn('Saving agentTrace on regenerate failed:', persistErr.message);
+      updated = await prisma.trip.update({
+        where: { id },
+        data: { itinerary },
+      });
     }
-
-    // Update trip with new itinerary
-    const updated = await prisma.trip.update({
-      where: { id },
-      data: { itinerary },
-    });
 
     return res.json({
       message: 'Itinerary regenerated successfully',
       trip: updated,
+      toolCallTrace,
+      agentMeta,
     });
   } catch (error) {
     console.error('Error regenerating itinerary:', error);

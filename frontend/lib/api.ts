@@ -246,6 +246,26 @@ export interface TripStop {
   createdAt: string;
 }
 
+export interface ToolCallTraceStep {
+  step: number;
+  tool: string;
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface AgentMeta {
+  budgetPassed?: boolean;
+  budgetCheck?: {
+    passed?: boolean;
+    max_budget?: number;
+    estimated_total?: number;
+    overage_amount?: number;
+    remaining?: number;
+    day_count?: number;
+  } | null;
+  attemptsUsed?: number | null;
+}
+
 export interface TripData {
   id: string;
   name: string;
@@ -260,6 +280,7 @@ export interface TripData {
   tripActivities?: any[];
   itinerary?: string | null;
   expenses?: string | null;
+  agentTrace?: string | null;
   createdAt: string;
 }
 
@@ -361,7 +382,12 @@ export const tripApi = {
     }),
 
   createTrip: (payload: CreateTripPayload) =>
-    apiFetch<{ message: string; trip: TripData }>("/api/trips", {
+    apiFetch<{
+      message: string;
+      trip: TripData;
+      toolCallTrace?: ToolCallTraceStep[];
+      agentMeta?: AgentMeta | null;
+    }>("/api/trips", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -395,7 +421,12 @@ export const tripApi = {
     apiFetch<{ cities: City[] }>("/api/trips/cities"),
 
   regenerateItinerary: (tripId: string) =>
-    apiFetch<{ message: string; trip: TripData }>(`/api/trips/${tripId}/regenerate-itinerary`, {
+    apiFetch<{
+      message: string;
+      trip: TripData;
+      toolCallTrace?: ToolCallTraceStep[];
+      agentMeta?: AgentMeta | null;
+    }>(`/api/trips/${tripId}/regenerate-itinerary`, {
       method: "POST",
     }),
 };
