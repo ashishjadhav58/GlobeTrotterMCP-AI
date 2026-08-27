@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from app import __version__
 from app.agent.admin_chat import run_admin_chat
 from app.agent.replan import plan_trip
-from app.auth import require_admin
+from app.agent.user_chat import run_user_plan_chat
+from app.auth import require_admin, require_user
 from app.mcp_server import mcp
 from pathlib import Path
 
@@ -71,6 +72,12 @@ class AdminChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     history: list[dict[str, str]] = Field(default_factory=list)
     maxRounds: int | None = Field(default=6, ge=1, le=10)
+
+
+class UserPlanChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    sessionId: str | None = None
+    maxRounds: int | None = Field(default=8, ge=1, le=12)
 
 
 @app.get("/health")
@@ -152,6 +159,39 @@ async def admin_chat_endpoint(
 
         logging.getLogger("uvicorn.error").error(
             "admin-chat failed: %s\n%s", exc, traceback.format_exc()
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/chat/plan-trip")
+async def user_plan_chat_endpoint(
+    body: UserPlanChatRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """
+    Multi-turn user planning chat (Gemini function calling + slot filling + ChatSession).
+    Requires Bearer JWT for an Active user.
+    """
+    try:
+        identity = require_user(authorization)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        return await run_user_plan_chat(
+            body.message,
+            user_id=identity["userId"],
+            session_id=body.sessionId,
+            max_rounds=body.maxRounds or 8,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        import traceback
+
+        logging.getLogger("uvicorn.error").error(
+            "user-plan-chat failed: %s\n%s", exc, traceback.format_exc()
         )
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

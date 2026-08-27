@@ -13,6 +13,73 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_schema(node: Any) -> Any:
+    """Strip JSON Schema fields Gemini functionDeclarations reject."""
+    if isinstance(node, list):
+        return [_sanitize_schema(x) for x in node]
+    if not isinstance(node, dict):
+        return node
+
+    # Prefer first branch of unions Gemini doesn't support well
+    if "anyOf" in node or "oneOf" in node:
+        branches = node.get("anyOf") or node.get("oneOf") or []
+        # Prefer object/array/string in that order
+        preferred = None
+        for b in branches:
+            if isinstance(b, dict) and b.get("type") in ("object", "array", "string", "number", "integer", "boolean"):
+                preferred = b
+                if b.get("type") == "object":
+                    break
+        chosen = _sanitize_schema(preferred or (branches[0] if branches else {"type": "string"}))
+        if isinstance(chosen, dict):
+            # keep description from parent if present
+            if node.get("description") and not chosen.get("description"):
+                chosen = {**chosen, "description": node["description"]}
+        return chosen
+
+    out: dict[str, Any] = {}
+    allowed = {
+        "type",
+        "description",
+        "properties",
+        "required",
+        "items",
+        "enum",
+        "format",
+        "nullable",
+    }
+    for key, value in node.items():
+        if key in ("additionalProperties", "$schema", "$defs", "definitions", "title", "default"):
+            continue
+        if key not in allowed and key not in ("properties", "items"):
+            # drop unknown keys like exclusiveMinimum etc.
+            if key not in ("minimum", "maximum", "minItems", "maxItems", "minLength", "maxLength"):
+                continue
+        if key == "properties" and isinstance(value, dict):
+            out[key] = {k: _sanitize_schema(v) for k, v in value.items()}
+        elif key == "items":
+            out[key] = _sanitize_schema(value)
+        elif key == "required" and isinstance(value, list):
+            out[key] = value
+        elif key == "type":
+            # Gemini wants a single type string
+            if isinstance(value, list):
+                non_null = [t for t in value if t != "null"]
+                out[key] = non_null[0] if non_null else "string"
+                if "null" in value:
+                    out["nullable"] = True
+            else:
+                out[key] = value
+        else:
+            out[key] = _sanitize_schema(value) if isinstance(value, (dict, list)) else value
+
+    if "type" not in out and "properties" in out:
+        out["type"] = "object"
+    if out.get("type") == "array" and "items" not in out:
+        out["items"] = {"type": "object"}
+    return out
+
+
 def mcp_tool_to_gemini_declaration(tool: Any) -> dict[str, Any]:
     """Convert an MCP Tool object to a Gemini functionDeclaration."""
     schema = getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {}
@@ -23,13 +90,18 @@ def mcp_tool_to_gemini_declaration(tool: Any) -> dict[str, Any]:
     if not isinstance(schema, dict):
         schema = {"type": "object", "properties": {}}
 
-    # Gemini wants JSON Schema-ish parameters; strip $schema / additional junk if present
-    parameters = {
-        "type": schema.get("type") or "object",
-        "properties": schema.get("properties") or {},
-    }
-    if schema.get("required"):
-        parameters["required"] = schema["required"]
+    parameters = _sanitize_schema(
+        {
+            "type": schema.get("type") or "object",
+            "properties": schema.get("properties") or {},
+            **({"required": schema["required"]} if schema.get("required") else {}),
+            **({"description": schema["description"]} if schema.get("description") else {}),
+        }
+    )
+    if not isinstance(parameters, dict):
+        parameters = {"type": "object", "properties": {}}
+    if parameters.get("type") != "object":
+        parameters = {"type": "object", "properties": {"value": parameters}}
 
     return {
         "name": tool.name,

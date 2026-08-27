@@ -1,14 +1,50 @@
 # MCP_AGENT_GUIDE.md
 
-Theory + implementation guide for the GlobeTrotter MCP server, tools, and (upcoming) chat agents.
+Theory + implementation guide for the GlobeTrotter MCP server, tools, and chat agents.
 
-> Updated incrementally as tools and agents land. Interview-ready: beginner → implementation → senior tradeoffs.
+> Interview-ready: beginner theory → tool catalog → agents → tradeoffs → setup.
 
 ---
 
 ## Section 1: Beginner theory
 
-*(Written after the system stabilizes — see execution plan.)*
+### What is MCP?
+
+**Model Context Protocol (MCP)** is a standard way for an LLM host to discover and call **tools** (and resources/prompts) exposed by a **server**. In GlobeTrotter:
+
+| Role | Who | Job |
+|------|-----|-----|
+| **MCP server** | Python `ai-service` (`app/mcp_server.py`) | Registers tools (`search_cities`, admin analytics, …) with JSON schemas |
+| **MCP client / agent** | Re-plan loop, admin chat, user chat | Asks the model what to call, then runs `mcp.call_tool` |
+| **Host app** | Next.js + Express | Auth, trip CRUD UI; proxies chat/`plan-trip` to Python |
+
+Tools are **not** hardcoded if/else trees in the chat agents. The model sees tool schemas and chooses names + arguments (function calling).
+
+### Agent vs single LLM call
+
+| Pattern | Behavior |
+|---------|----------|
+| **One-shot LLM** | Prompt → text. No DB lookups unless you stuffed data into the prompt. |
+| **Tool-using agent** | Prompt + tools → model may request tool calls → you execute → feed results back → model answers (possibly more tools). |
+| **Re-plan loop** (`POST /plan-trip`) | Deterministic outer loop: generate → check budget → maybe alternatives → regenerate. Tools are still MCP; the *order* is coded. |
+| **Chat agents** | Soft policy in the system prompt + whitelist; Gemini decides which tools and when. |
+
+### Slot filling
+
+**Slot filling** means: do not invent missing trip fields. Required slots before `generate_itinerary`:
+
+1. Destination  
+2. Start date  
+3. End date  
+4. Budget (USD number for tools; ₹ is converted ≈ ÷83)
+
+If any slot is missing, the user planning agent asks a clarifying question and **must not** call `generate_itinerary` yet.
+
+### Why a separate Python service?
+
+- Official MCP SDK and Gemini/Groq tooling fit Python cleanly.  
+- Node keeps Prisma CRUD, JWT, and the existing trip API.  
+- One process mounts HTTP (`/plan-trip`, `/admin/chat`, `/chat/plan-trip`) and `/mcp`.
 
 ---
 
@@ -280,6 +316,25 @@ Full schemas for these are also listed via `GET /health` → `mcp_tools` and MCP
 
 ---
 
+### `persist_planned_trip`
+
+**Purpose:** Write a finished chat plan into Postgres as a real `Trip` (+ stops) and return an itinerary link.
+
+**Inputs / outputs**
+
+| | |
+|--|--|
+| **Parameters** | `user_id`, `destination`, `start_date`, `end_date`, `max_budget`, `itinerary[]`, optional `name` / `description` / `expenses` |
+| **Returns** | `{ trip_id, itinerary_link, … }` |
+
+**Data source:** Inserts into `"Trip"` / related tables via `ai-service/app/services/trip_persist.py`.
+
+**Location:** MCP `persist_planned_trip`; user chat **forces** authenticated `user_id` (ignores model-supplied id on write).
+
+**Gotchas:** Side effect — only after slots filled and the user is ready (or a solid final itinerary exists). Never invent links; only quote `itinerary_link` from the tool result.
+
+---
+
 ## Section 3: Chat agents
 
 ### Admin chat (`POST /admin/chat`)
@@ -295,7 +350,7 @@ Full schemas for these are also listed via `GET /health` → `mcp_tools` and MCP
 
 1. Client sends `{ message, history?, maxRounds? }` + `Authorization: Bearer …`.
 2. Server verifies ADMIN JWT against Postgres.
-3. MCP admin tool schemas are converted to Gemini `functionDeclarations`.
+3. MCP admin tool schemas are converted to Gemini `functionDeclarations` (schemas sanitized: strip `additionalProperties` / simplify `anyOf`).
 4. Gemini receives system instruction + history + user message + tool schemas.
 5. If Gemini returns `functionCall` part(s):
    - Execute each via `mcp.call_tool`
@@ -328,19 +383,83 @@ Both tools were chosen **in one Gemini turn** (multi-tool), not a hardcoded if/e
 
 ---
 
-### User planning chat
+### User planning chat (`POST /chat/plan-trip`)
 
-*(Part 3 — pending.)*
+**Purpose:** Multi-turn trip planning with **slot filling**, session memory, and a planning-tool whitelist. When ready, persists a real trip and returns an itinerary link.
+
+**Auth:** Bearer JWT for an Active user (`require_user`). Prefer Node `POST /api/chat/plan-trip` (auth middleware → proxies JWT to Python).
+
+**Allowed tools:**  
+`search_cities`, `generate_itinerary`, `check_budget`, `suggest_alternatives`, `search_activities`, `compare_destinations`, `check_weather_for_trip`, `optimize_itinerary_order`, `find_similar_trips`, `persist_planned_trip`.
+
+**Session memory:** Prisma `ChatSession` (`messages` JSON string). Create / load / append via `app/services/sessions.py`. Pass `sessionId` on later turns.
+
+#### Request lifecycle
+
+1. Client: `{ message, sessionId?, maxRounds? }` + Bearer JWT.  
+2. Resolve/create `ChatSession` for `userId`.  
+3. Build Gemini contents from prior messages + new user turn.  
+4. Function-calling loop (same pattern as admin chat) over the user tool whitelist.  
+5. Force `user_id` on `persist_planned_trip` / `find_similar_trips` (never trust model for ownership).  
+6. Persist assistant + tool trace into the session.  
+7. Response: `{ session_id, answer, tool_call_trace, rounds_used, … }`.
+
+#### Worked examples (smoke-tested)
+
+**Turn 1 — slot fill**  
+User: “plan me a trip”  
+`trace_tools: []`  
+Answer asks for where / when / budget — no `generate_itinerary`.
+
+**Turn 2 — compare under budget**  
+User (same `session_id`): “should I go to Paris or Rome for 5 days under ₹40000?”  
+`trace_tools: ["compare_destinations"]`  
+(`compare_destinations` itself calls Open-Meteo weather for both cities.)  
+Answer converts ₹→USD, notes both ~over budget, recommends adjusting duration/budget or a tighter Rome plan.
+
+**Later turns (intended):** fill exact dates → `generate_itinerary` → `check_budget` / `suggest_alternatives` → `persist_planned_trip` → answer includes `itinerary_link`.
+
+**Code locations**
+
+- Agent: `ai-service/app/agent/user_chat.py`
+- Sessions: `ai-service/app/services/sessions.py`
+- Persist: `ai-service/app/services/trip_persist.py`
+- HTTP: `POST /chat/plan-trip` in `app/main.py`
+- Node: `backend/routes/chatRoutes.js` → `/api/chat/plan-trip`
+
+**Test:** `python scripts/test_user_chat.py`
+
+**Gotcha:** Prisma `ChatSession.updatedAt` is NOT NULL — INSERT must set `"createdAt"` / `"updatedAt"` (or DB defaults). Omitting them causes `NotNullViolation`.
 
 ---
 
 ## Section 4: Design decisions and tradeoffs
 
-*(Senior-level — after agents are stable.)*
+| Decision | Choice | Why / tradeoff |
+|----------|--------|----------------|
+| MCP in-process vs remote | In-process `mcp.call_tool` | Simple deploy; one uvicorn. Split later if tools grow or need separate scaling. |
+| Re-plan vs chat agent | Hardcoded re-plan for trip create; soft policy for chat | Create-trip needs reliable budget pass; chat needs flexibility and clarifications. |
+| Admin vs user tool whitelists | Strict separate sets | Least privilege — users never see revenue/disabled-user tools. |
+| Ownership on writes | Force JWT `user_id` in code | Models can hallucinate ids; DB writes must ignore that. |
+| Revenue tool | Mock `$` with `is_mock` | No payment tables yet; keep the tool name stable for demos. |
+| Weather | Open-Meteo (no key) | Free; ~16-day horizon limit. |
+| Similar trips | Token Jaccard | No vector DB in-repo; good enough for demos; swap for embeddings later. |
+| LLM provider | Gemini + optional Groq (`LLM_PROVIDER=auto`) | Gemini 429s are common; flash-lite / Groq fallback. |
+| Schema → Gemini | Sanitize JSON Schema | Gemini rejects `additionalProperties` / some `anyOf`; strip before declarations. |
+| Session store | Prisma `ChatSession` in same Postgres | One DB with trips/users; no Redis required for v1. |
+| PDF / email | Explicit user intent | Side effects; dry_run for email in tests. |
+
+**Interview angle:** “MCP gives a stable tool contract; agents are thin loops + policy. Security is whitelist + auth + forced user_id, not prompt trust.”
 
 ---
 
 ## Section 5: Setup and testing walkthrough
+
+### Env
+
+- `ai-service/.env` — `DATABASE_URL`, `GEMINI_API_KEY` (and/or Groq), `JWT_SECRET` matching Node, optional SMTP.  
+- `backend/.env` — `AI_SERVICE_URL=http://127.0.0.1:8000`.  
+- Never commit real keys; use `.env.example` as the template.
 
 ### Register check
 
@@ -349,28 +468,42 @@ cd ai-service
 .\.venv\Scripts\Activate.ps1
 $env:PYTHONPATH = "."
 uvicorn app.main:app --host 127.0.0.1 --port 8000
-# GET http://127.0.0.1:8000/health  → mcp_tools includes get_today_user_count, get_today_trip_count
+# GET http://127.0.0.1:8000/health  → mcp_tools lists planning + admin + persist tools
 ```
 
-### Manual tool test (in-process MCP)
+If port 8000 is stuck, stop the old Python/uvicorn process before restarting (code changes need a restart).
+
+### Tool smokes
 
 ```powershell
 python scripts/test_admin_tools.py
+python scripts/test_planning_tools.py
+python scripts/test_action_tools.py
 ```
-
-Expected: JSON with `count` and `day_utc` for both tools.
 
 ### Admin chat
 
 ```powershell
 python scripts/test_admin_chat.py
-# or HTTP (needs admin JWT):
-# POST http://127.0.0.1:8000/admin/chat
-# Authorization: Bearer <admin-jwt>
-# { "message": "how many users signed up today and top 3 destinations?" }
-#
-# Via Node (adminAuth):
-# POST http://127.0.0.1:5000/api/admin/chat
+# HTTP: POST http://127.0.0.1:8000/admin/chat  (+ admin Bearer)
+# Node: POST http://127.0.0.1:5000/api/admin/chat
+```
+
+### User planning chat
+
+```powershell
+python scripts/test_user_chat.py
+# HTTP: POST http://127.0.0.1:8000/chat/plan-trip  (+ user Bearer)
+#   { "message": "plan me a trip", "sessionId": null }
+# Node: POST http://127.0.0.1:5000/api/chat/plan-trip
+```
+
+### Prisma / ChatSession
+
+```powershell
+cd backend
+npx prisma db push
+# ChatSession model in schema.prisma; Python also ensure_chat_sessions_table() as fallback
 ```
 
 ---
@@ -392,9 +525,8 @@ python scripts/test_admin_chat.py
 | `find_similar_trips` | ✅ (token Jaccard) |
 | `export_trip_pdf` | ✅ |
 | `send_trip_reminder_email` | ✅ (SMTP / dry_run) |
-| Part 1 tools | ✅ complete |
+| `persist_planned_trip` | ✅ |
+| Part 1 tools | ✅ |
 | Part 2 admin chat | ✅ |
-| Part 3 user chat | Pending |
-| Part 2 admin chat | Pending |
-| Part 3 user chat | Pending |
-| Sections 1, 4, 5 (full) | Partial (testing notes above) |
+| Part 3 user chat | ✅ |
+| Sections 1–5 | ✅ |

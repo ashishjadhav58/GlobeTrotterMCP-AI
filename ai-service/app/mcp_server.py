@@ -14,6 +14,7 @@ from app.services import budget as budget_service
 from app.services import cities as cities_service
 from app.services import gemini as gemini_service
 from app.services import planning as planning_service
+from app.services.trip_persist import persist_planned_trip
 
 mcp = MCPServer(
     name="globetrotter-mcp",
@@ -290,3 +291,36 @@ def export_trip_pdf(trip_id: str) -> dict[str, Any]:
 def send_trip_reminder_email(trip_id: str, dry_run: bool = False) -> dict[str, Any]:
     """MCP tool: send trip reminder email."""
     return actions_service.send_trip_reminder_email(trip_id=trip_id, dry_run=dry_run)
+
+
+@mcp.tool(
+    name="persist_planned_trip",
+    description=(
+        "Save a finalized itinerary as a real Trip for a user and return itinerary_link "
+        "(/itinerary/{tripId}). Requires user_id, destination, start_date, end_date, max_budget, "
+        "and itinerary array. Optional name, description, expenses."
+    ),
+)
+def persist_planned_trip_tool(
+    user_id: str,
+    destination: str,
+    start_date: str,
+    end_date: str,
+    max_budget: float,
+    itinerary: list[dict[str, Any]] | None = None,
+    name: str = "",
+    description: str = "",
+    expenses: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """MCP tool: persist planned trip to Postgres."""
+    return persist_planned_trip(
+        user_id=user_id,
+        destination=destination,
+        start_date=start_date,
+        end_date=end_date,
+        max_budget=max_budget,
+        name=name,
+        description=description,
+        itinerary=itinerary,
+        expenses=expenses,
+    )
